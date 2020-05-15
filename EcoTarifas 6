@@ -1,0 +1,225 @@
+/***********************************************
+ *ECOTARIFAS - Sistema de Economia de Energia
+ * 
+ *Criado em 14/06/2019
+ *Última atualização em 28/08/2019
+ *Autor Lucas Eliel e Lucas Souza
+ ***********************************************/
+
+/************************************************************************
+ **************************** Bibliotecas *******************************
+ ***********************************************************************/
+
+#include "EmonLib.h"
+#include <SPI.h>
+#include <Ethernet.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <ArduinoJson.h>
+
+/************************************************************************
+ ***************************** Variáveis ********************************
+ ***********************************************************************/
+
+//CANAL 1
+bool enviaInfoCanal1 = false;
+unsigned long offsetCanal1 = 0;
+String correnteCanal1;
+double potenciaCanal1;
+
+//CANAL 2
+bool enviaInfoCanal2 = false;
+unsigned long offsetCanal2 = 0;
+String correnteCanal2;
+double potenciaCanal2;
+
+//CANAL 3
+bool enviaInfoCanal3 = false;
+unsigned long offsetCanal3 = 0;
+String correnteCanal3;
+double potenciaCanal3;
+
+//CONTROLE
+int porta_rele = 7;
+
+//DISPLAY
+Adafruit_SSD1306 display = Adafruit_SSD1306();
+
+//TRANSFORMADOR DE CORRENTE
+EnergyMonitor canal1;
+EnergyMonitor canal2;
+EnergyMonitor canal3;
+
+/************************************************************************
+ ***************************** Void Setup *******************************
+ ***********************************************************************/
+ 
+void setup() {
+  
+  Serial.begin(9600); // Inicializa a comunicação serial para o terminal de comando
+  
+  canal1.current(1, 40); // Corrente: (Pino analógico, Calibração) - Canal 1
+  canal2.current(2, 40); // Corrente: (Pino analógico, Calibração) - Canal 2
+  canal3.current(3, 40); // Corrente: (Pino analógico, Calibração) - Canal 3
+
+  digitalWrite(porta_rele, HIGH); //Identifica o controle como Normalmente Fechado
+  
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C); //Inicializa o display no endereço I2C 0x3C
+  display.setTextColor(WHITE); //Define a cor do texto
+  display.setTextSize(1); //Define o tamanho da fonte do texto
+  display.clearDisplay(); //Limpa o texto do display
+  
+  configuraDisplay(10, 10, "Inicializando Ethernet com DHCP:", 1500);
+
+  byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+  //1 Verifica a existência de um MAC / 2 Verifica a existência do modulo ethernet / 3 Verifica se cabo de ethernet está desconectado
+  if (Ethernet.begin(mac) == 0 || Ethernet.hardwareStatus() == EthernetNoHardware || Ethernet.linkStatus() == LinkOFF) { //Inicializa a conexão com a ethernet com o MAC
+    configuraDisplay(10, 10, "Falha ao configurar a Ethernet", 1500);
+    return;
+  } else {
+    configuraDisplay(10, 10, "IP atribuído como DHCP: "+ Ethernet.localIP(), 1500);
+  }
+  
+  delay(1000); //Espera um segundo para que o Modulo Ethernet seja inicializado.
+  configuraDisplay(10, 10, "Conectando em: "+ String("191.252.202.70"), 1500);
+}
+
+/************************************************************************
+ ***************************** Void Loop ********************************
+ ***********************************************************************/
+
+void loop() {
+
+  /*************************** CANAL 1 ********************************/
+  double IrmsCanal1 = canal1.calcIrms(1480);
+  double PotenciaCanal1 = IrmsCanal1*230.0;
+  
+  if(IrmsCanal1 < 0.15){
+    if(enviaInfoCanal1){
+      long tempoUso1 = millis() - offsetCanal1;
+      EthernetClient client = criarRequisicao("Microondas", "127", correnteCanal1, potenciaCanal1, tempoUso1, 0);
+      client.stop();
+      delay(10000);
+      enviaInfoCanal1 = false; 
+    }
+  }else {
+    if(!enviaInfoCanal1){
+      offsetCanal1 = millis();
+    }
+    correnteCanal1 = IrmsCanal1;
+    potenciaCanal1 = PotenciaCanal1;
+    enviaInfoCanal1 = true;
+  }
+
+  //CONTROLE CANAL 1
+  EthernetClient client = criarRequisicao("", "", "", 0, 0, 1);
+  client.stop();
+  delay(10000);
+  
+  int len = client.available();
+  if (len > 0) {
+    byte buffer[80];
+    if (len > 80) len = 80;
+    client.read(buffer, len);
+
+    String stringRequest = buffer;
+    String stringBody = stringRequest.substring(300);
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, stringBody);
+    JsonObject root = doc.to<JsonObject>();
+    
+    if(root.size() > 0){
+      int status = root[String("status")];
+  
+      if(status == 1){
+        digitalWrite(porta_rele, HIGH);
+        configuraDisplay(10, 10, "CANAL 1 == Controle ON", 1500);
+      }else{
+        digitalWrite(porta_rele, LOW);
+        configuraDisplay(10, 10, "CANAL 1 == Controle OFF", 1500);
+      }
+    }
+  }
+  /************************* FIM CANAL 1 ******************************/
+
+
+  /*************************** CANAL 2 ********************************/
+  double IrmsCanal2 = canal2.calcIrms(1480);
+  double PotenciaCanal2 = IrmsCanal2*230.0;
+  
+  if(IrmsCanal2 < 0.15){
+    if(enviaInfoCanal2){
+      long tempoUso2 = millis() - offsetCanal2;
+      EthernetClient client = criarRequisicao("Geladeira", "127", correnteCanal2, potenciaCanal2, tempoUso2, 0);
+      client.stop();
+      delay(10000);
+      enviaInfoCanal2 = false; 
+    }
+  }else {
+    if(!enviaInfoCanal2){
+      offsetCanal2 = millis();
+    }
+    correnteCanal2 = IrmsCanal2;
+    potenciaCanal2 = PotenciaCanal2;
+    enviaInfoCanal2 = true;
+  }
+  /************************* FIM CANAL 2 ******************************/
+  
+  
+  /*************************** CANAL 3 ********************************/
+  double IrmsCanal3 = canal3.calcIrms(1480);
+  double PotenciaCanal3 = IrmsCanal3*230.0;
+  
+  if(IrmsCanal3 < 0.15){
+    if(enviaInfoCanal3){
+      long tempoUso3 = millis() - offsetCanal3;
+      EthernetClient client = criarRequisicao("Ar_Condicionado", "127", correnteCanal3, potenciaCanal3, tempoUso3, 0);
+      client.stop();
+      delay(10000);
+      enviaInfoCanal3 = false; 
+    }
+  }else {
+    if(!enviaInfoCanal3){
+      offsetCanal3 = millis();
+    }
+    correnteCanal3 = IrmsCanal3;
+    potenciaCanal3 = PotenciaCanal3;
+    enviaInfoCanal3 = true;
+  }
+  /************************* FIM CANAL 3 ******************************/
+}
+
+/************************************************************************
+ ***************************** Métodos **********************************
+ ***********************************************************************/
+
+void configuraDisplay(int pos1, int pos2, String msg, int tempo){
+  display.setCursor(pos1, pos2);
+  display.print(msg);
+  display.display();
+  delay(tempo);
+}
+
+EthernetClient criarRequisicao(String nomeCanal, String tensaoCanal, String correnteCanal, double potenciaCanal, long tempoUsoCanal, int tipo){
+  EthernetClient client;
+  String url;
+
+  if(tipo == 0){
+    url = "/consumo/incluir/"+nomeCanal+"/"+tensaoCanal+"/"+correnteCanal+"/"+String(potenciaCanal)+"/2019-07-20/"+String(tempoUsoCanal)+"/200";
+  }else{
+    url = "/controle/listar";  
+  }
+  
+  if (client.connect("191.252.202.70", 8080)) {
+    client.println("GET "+url+" HTTP/1.1");
+    client.print("HOST: ");
+    client.println("191.252.202.70");
+    client.println("Conexão: concluída");
+    client.println();
+    configuraDisplay(10, 10, "CANAL 3 == Dados Gerados", 1500);
+  } else {
+    configuraDisplay(10, 10, "Falha na Conexão", 1500);
+  }
+  return client;
+}

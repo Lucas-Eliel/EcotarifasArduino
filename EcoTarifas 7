@@ -1,0 +1,360 @@
+/***********************************************
+ *ECOTARIFAS - Sistema de Economia de Energia
+ * 
+ *Criado em 14/06/2019
+ *Última atualização em 28/08/2019
+ *Autor Lucas Eliel e Lucas Souza
+ ***********************************************/
+
+/************************************************************************
+ **************************** Bibliotecas *******************************
+ ***********************************************************************/
+
+#include "EmonLib.h"
+#include <SPI.h>
+#include <Ethernet.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <ArduinoJson.h>
+
+/************************************************************************
+ ***************************** Variáveis ********************************
+ ***********************************************************************/
+
+//CANAL 1
+bool enviaInfoCanal1 = false;
+unsigned long offsetCanal1 = 0;
+String correnteCanal1;
+double potenciaCanal1;
+
+//CANAL 2
+bool enviaInfoCanal2 = false;
+unsigned long offsetCanal2 = 0;
+String correnteCanal2;
+double potenciaCanal2;
+
+//CANAL 3
+bool enviaInfoCanal3 = false;
+unsigned long offsetCanal3 = 0;
+String correnteCanal3;
+double potenciaCanal3;
+
+//ETHERNET
+EthernetClient client;
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+char server[] = "191.252.202.70";
+IPAddress ip(191, 252, 202, 70);
+IPAddress myDns(192, 168, 0, 1);
+
+//CONTROLE
+int porta_rele = 7;
+
+//DISPLAY
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 32 // OLED display height, in pixels
+
+// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
+#define OLED_RESET     4 // Reset pin # (or -1 if sharing Arduino reset pin)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+//TRANSFORMADOR DE CORRENTE
+EnergyMonitor canal1;
+EnergyMonitor canal2;
+EnergyMonitor canal3;
+
+/************************************************************************
+ ***************************** Void Setup *******************************
+ ***********************************************************************/
+ 
+void setup() {
+  
+  Serial.begin(9600); // Inicializa a comunicação serial para o terminal de comando
+  
+  canal1.current(1, 40); // Corrente: (Pino analógico, Calibração) - Canal 1
+  canal2.current(2, 40); // Corrente: (Pino analógico, Calibração) - Canal 2
+  canal3.current(3, 40); // Corrente: (Pino analógico, Calibração) - Canal 3
+
+  digitalWrite(porta_rele, HIGH); //Identifica o controle como Normalmente Fechado
+  
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C); //Inicializa o display no endereço I2C 0x3C
+  display.setTextColor(WHITE); //Define a cor do texto
+  display.setTextSize(1); //Define o tamanho da fonte do texto
+  display.clearDisplay(); //Limpa o texto do display
+  
+  Serial.println("Inicializando Ethernet com DHCP:"); 
+  display.setCursor(10,10);
+  display.print("Inicializando Ethernet com DHCP:");
+  display.display();
+  display.clearDisplay();
+  delay(500);
+  
+  if (Ethernet.begin(mac) == 0) { //Inicializa a conexão com a ethernet
+    Serial.println("Falha ao configurar a Ethernet usando o DHCP");
+    display.setCursor(10,10);
+    display.print("Falha ao configurar a Ethernet usando o DHCP");
+    display.display();
+    display.clearDisplay();
+    delay(500);
+
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) { //Verifica a existência do modulo ethernet
+      Serial.println("O módulo Ethernet não foi encontrado. Desculpe, não é possível executar sem hardware. :(");
+      display.setCursor(10,10);
+      display.print("O módulo Ethernet não foi encontrado. Desculpe, não é possível executar sem hardware. :(");
+      display.display();
+      display.clearDisplay();
+      delay(500);
+      while (true) {
+        delay(1); 
+      }
+    }
+    
+    if (Ethernet.linkStatus() == LinkOFF) { //Verifica se cabo de ethernet está desconectado
+      Serial.println("O cabo Ethernet não está conectado.");
+      display.setCursor(10,10);
+      display.print("O cabo Ethernet não está conectado.");
+      display.display();
+      display.clearDisplay();
+      delay(500);
+    }
+  
+    Ethernet.begin(mac, ip, myDns); //Tenta Configurar usando o IP em vez do DHCP 
+  } else {
+    Serial.print("  IP atribuído como DHCP ");
+    Serial.println(Ethernet.localIP());
+    display.setCursor(10,10);
+    display.print("IP atribuído como DHCP: "+ Ethernet.localIP());
+    display.display();
+    display.clearDisplay();
+    delay(500);
+  }
+  
+  delay(1000); //Espera um segundo para que o Modulo Ethernet seja inicializado.
+  Serial.print("Conectando em ");
+  Serial.print(server);
+  Serial.println("...");
+  
+  display.setCursor(10,10);
+  display.print("Conectando em: 191.252.202.70");
+  display.display();
+  display.clearDisplay();
+  delay(500);
+}
+
+/************************************************************************
+ ***************************** Void Loop ********************************
+ ***********************************************************************/
+
+void loop() {
+  
+  display.clearDisplay();
+  display.setCursor(10,10);
+  display.print("ECOTARIFAS");
+  display.display();
+
+  /*************************** CANAL 1 ********************************/
+  double IrmsCanal1 = canal1.calcIrms(1480);
+  double PotenciaCanal1 = IrmsCanal1*230.0;
+  String nomeCanal1;
+  String tensaoCanal1;
+  long tempoUsoCanal1;
+  
+  if(IrmsCanal1 < 0.15){
+    if(enviaInfoCanal1){
+      String nomeCanal1 = "Microondas";
+      String tensaoCanal1 = "127";
+      long tempoUsoCanal1 = millis() - offsetCanal1;
+      Serial.println("CANAL 1 ================ Tensao:"+  tensaoCanal1 +" Corrente: "+ correnteCanal1 +" Potencia: "+ potenciaCanal1 + " Tempo Uso: "+ tempoUsoCanal1);
+      
+      if (client.connect(server, 8080)) {
+        Serial.print("Conectando em ");
+        Serial.println(client.remoteIP());
+        client.println("GET /consumo/incluir/"+nomeCanal1+"/"+tensaoCanal1+"/"+correnteCanal1+"/"+potenciaCanal1+"/2019-07-20/"+tempoUsoCanal1+"/200 HTTP/1.1");
+        client.print("HOST: ");
+        client.println(server);
+        client.println("Conexão: concluída");
+        client.println();
+        client.stop();
+        
+        display.clearDisplay();
+        display.setCursor(10,10);
+        display.print("CANAL 1 == Dados Gerados");
+        display.display();
+        
+      } else {
+        Serial.println("Falha na Conexão");
+        
+        display.clearDisplay();
+        display.setCursor(10,10);
+        display.print("Falha na Conexão");
+        display.display();
+      }
+      delay(10000);
+    
+      enviaInfoCanal1 = false; 
+    }
+  }else {
+    if(!enviaInfoCanal1){
+      offsetCanal1 = millis();
+    }
+    correnteCanal1 = IrmsCanal1;
+    potenciaCanal1 = PotenciaCanal1;
+    enviaInfoCanal1 = true;
+  }
+
+  //CONTROLE CANAL 1
+  /*if (client.connect(server, 8080)) {
+    Serial.print("Conectando em ");
+    Serial.println(client.remoteIP());
+    client.println("GET /controle/listar HTTP/1.1");
+    client.print("HOST: ");
+    client.println(server);
+    client.println("Conexão: concluída");
+    client.println();
+    client.stop();
+  } else {
+    Serial.println("Falha na Conexão");
+    
+    display.setCursor(10,10);
+    display.print("Falha na Conexão");
+    display.display();
+    delay(500);
+    display.clearDisplay();
+    
+  }
+  delay(10000);
+  
+  int len = client.available();
+  if (len > 0) {
+    byte buffer[80];
+    if (len > 80) len = 80;
+    client.read(buffer, len);
+    Serial.write(buffer, len);
+    
+    String stringRequest = buffer;
+    String stringBody = stringBody.substring(300);
+    JsonObject& root = jsonBuffer.parseObject(stringBody);
+    
+    if(root.size() > 0){
+      int status = root[String("status")];
+  
+      if(status == 1){
+        digitalWrite(porta_rele, HIGH);
+        display.setCursor(10,10);
+        display.print("CANAL 1 == Controle ON");
+        display.display();
+        delay(1500);
+      }else{
+        digitalWrite(porta_rele, LOW);
+        display.setCursor(10,10);
+        display.print("CANAL 1 == Controle OFF");
+        display.display();
+        delay(1500);
+      }
+    }
+  }*/
+  /************************* FIM CANAL 1 ******************************/
+
+
+  /*************************** CANAL 2 ********************************/
+  double IrmsCanal2 = canal2.calcIrms(1480);
+  double PotenciaCanal2 = IrmsCanal2*230.0;
+  String nomeCanal2;
+  String tensaoCanal2;
+  
+  if(IrmsCanal2 < 0.15){
+    if(enviaInfoCanal2){
+      String nomeCanal2 = "Geladeira";
+      String tensaoCanal2 = "127";
+      long tempoUsoCanal2 = millis() - offsetCanal2;
+      Serial.println("CANAL 2 ================ Tensao:"+  tensaoCanal2 +" Corrente: "+ correnteCanal2 +" Potencia: "+ potenciaCanal2 + " Tempo Uso: "+ tempoUsoCanal2);
+      
+      if (client.connect(server, 8080)) {
+        Serial.print("Conectando em ");
+        Serial.println(client.remoteIP());
+        client.println("GET /consumo/incluir/"+nomeCanal2+"/"+tensaoCanal2+"/"+correnteCanal2+"/"+potenciaCanal2+"/2019-07-20/"+tempoUsoCanal2+"/200 HTTP/1.1");
+        client.print("HOST: ");
+        client.println(server);
+        client.println("Conexão: concluída");
+        client.println();
+        client.stop();
+
+        display.clearDisplay();
+        display.setCursor(10,10);
+        display.print("CANAL 2 == Dados Gerados");
+        display.display();
+        
+      } else {
+        Serial.println("Falha na Conexão");
+        
+        display.clearDisplay();
+        display.setCursor(10,10);
+        display.print("Falha na Conexão");
+        display.display(); 
+      }
+      delay(10000);
+      
+      enviaInfoCanal2 = false; 
+    }
+  }else {
+    if(!enviaInfoCanal2){
+      offsetCanal2 = millis();
+    }
+    correnteCanal2 = IrmsCanal2;
+    potenciaCanal2 = PotenciaCanal2;
+    enviaInfoCanal2 = true;
+  }
+  /************************* FIM CANAL 2 ******************************/
+  
+  
+  /*************************** CANAL 3 ********************************/
+  double IrmsCanal3 = canal3.calcIrms(1480);
+  double PotenciaCanal3 = IrmsCanal3*230.0;
+  String nomeCanal3;
+  String tensaoCanal3;
+  
+  if(IrmsCanal3 < 0.15){
+    if(enviaInfoCanal3){
+      String nomeCanal3 = "Ar_Condicionado";
+      String tensaoCanal3 = "127";
+      long tempoUsoCanal3 = millis() - offsetCanal3;
+      Serial.println("CANAL 3 ================ Tensao:"+  tensaoCanal3 +" Corrente: "+ correnteCanal3 +" Potencia: "+ potenciaCanal3 + " Tempo Uso: "+ tempoUsoCanal3);
+    
+      if (client.connect(server, 8080)) {
+        Serial.print("Conectando em ");
+        Serial.println(client.remoteIP());
+        // Make a HTTP request:
+        client.println("GET /consumo/incluir/"+nomeCanal3+"/"+tensaoCanal3+"/"+correnteCanal3+"/"+potenciaCanal3+"/2019-07-20/"+tempoUsoCanal3+"/200 HTTP/1.1");
+        client.print("HOST: ");
+        client.println(server);
+        client.println("Conexão: concluída");
+        client.println();
+        client.stop();
+        
+        display.clearDisplay();
+        display.setCursor(10,10);
+        display.print("CANAL 3 == Dados Gerados");
+        display.display();
+        
+      } else {
+        Serial.println("Falha na Conexão");
+        
+        display.clearDisplay();
+        display.setCursor(10,10);
+        display.print("Falha na Conexão");
+        display.display();
+      }
+      delay(10000);
+      
+      enviaInfoCanal3 = false; 
+    }
+  }else {
+    if(!enviaInfoCanal3){
+      offsetCanal3 = millis();
+    }
+    correnteCanal3 = IrmsCanal3;
+    potenciaCanal3 = PotenciaCanal3;
+    enviaInfoCanal3 = true;
+  }
+  /************************* FIM CANAL 3 ******************************/
+}

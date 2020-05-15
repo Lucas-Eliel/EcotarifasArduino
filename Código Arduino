@@ -1,0 +1,227 @@
+/**
+ * Web client
+ *Este esboço se conecta a um servidor (localhost=> 192.168.0.14)
+ *usando o modulo Ethernet Arduino.
+ *
+ *Criado 08/07/2019
+ *Autor Lucas Eliel e Lucas Souza
+ */
+
+/**
+ * Resevado para a criação 
+ * do imports das bibliotecas
+ */
+#include <SPI.h>
+#include <Ethernet.h>
+#include "EmonLib.h"
+
+/**
+ * Cada equipamento tem um endereço MAC, para tanto,
+ * o endereço MAC abaixo foi utilizado o mesmo da documentação
+ * do Arduino
+ */
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
+
+/**
+ * Define-se neste momento o IP do servidor a ser acessado
+ */
+char server[] = "192.168.0.14";
+
+/**
+ * Define-se o IP estático caso o DHCP não ser atribuido
+ */
+IPAddress ip(192, 168, 0, 14);
+IPAddress myDns(192, 168, 0, 1);
+
+/**
+ * Incializa a Biblioteca do EthernetClient, para ser utilizada 
+ * posteriormente. Para utilizá-la, basta passar o IP e a PORTA 
+ * do servidor.
+ */
+EthernetClient client;
+
+/**
+ * Incializa a Biblioteca do EnergyMonitor, para ser utilizada 
+ * posteriormente. Para nos Transformadores de corrente
+ */
+EnergyMonitor emon1;
+
+/**
+ * Criado variaveis para controlar o tempo das requisições e 
+ * ações no programa.
+ */
+unsigned long beginMicros, endMicros;
+unsigned long byteCount = 0;
+bool printWebData = true;
+
+void setup() {
+  
+  /**
+   * Abre a comunicação serial e espera a porta abrir
+   * espera que a porta serial se conecte. Necessário apenas para porta USB nativa
+   */
+  Serial.begin(9600);
+  while (!Serial) {
+    ; 
+  }
+
+  /**
+   * Inicializa a conexão Ethernet
+   */
+  Serial.println("Inicializando Ethernet com DHCP:");
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Falha ao configurar a Ethernet usando o DHCP");
+    /**
+     * Verifica se existe um hardware Ethernet conectado
+     */
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      Serial.println("O módulo Ethernet não foi encontrado. Desculpe, não é possível executar sem hardware. :(");
+      while (true) {
+        delay(1); 
+      }
+    }
+    if (Ethernet.linkStatus() == LinkOFF) {
+      Serial.println("O cabo Ethernet não está conectado.");
+    }
+    /**
+     * Tenta Configurar usando o IP em vez do DHCP
+     */
+    Ethernet.begin(mac, ip, myDns);
+  } else {
+    Serial.print("  IP atribuído como DHCP ");
+    Serial.println(Ethernet.localIP());
+  }
+  
+  /**
+   * Espera-se um segundo para que o Modulo Ethernet seja 
+   * inicializado.
+   */
+  delay(1000);
+  Serial.print("connecting to ");
+  Serial.print(server);
+  Serial.println("...");
+
+  /**
+   * Cria Valores para Insert
+   */
+   String valoresDoInsertConsumo = criarInsertDoConsumo("J", "23", "25", "33", "2019-06-15", "15", "200");
+
+   /**
+    * Realiza o Insert
+    */
+   inserirDadosDoConsumo(valoresDoInsertConsumo);
+
+   /**
+    * Busca controle das cargas
+    */
+   dadosControleCarga();
+
+  /**
+   * Armazena o tempo gasto no processo
+   */
+  beginMicros = micros();
+  
+    emon1.current(1, 40);             // Current: input pin, calibration.
+}
+
+void loop() {
+/**
+ * Caso a Resposta do Servidor disponibilize bytes. 
+ * É realizado a leitura e posteriormente a escrita.
+ */
+  int len = client.available();
+  if (len > 0) {
+    byte buffer[80];
+    if (len > 80) len = 80;
+    client.read(buffer, len);
+    if (printWebData) {
+      Serial.write(buffer, len); // mostra no monitor serial (retarda algumas placas)
+    }
+    byteCount = byteCount + len;
+  }
+
+  /**
+   * Se o servidor estiver desconectado, pare o cliente:
+   */
+  if (!client.connected()) {
+    endMicros = micros();
+    Serial.println();
+    Serial.println("disconnecting.");
+    client.stop();
+    Serial.print("Received ");
+    Serial.print(byteCount);
+    Serial.print(" bytes in ");
+    float seconds = (float)(endMicros - beginMicros) / 1000000.0;
+    Serial.print(seconds, 4);
+    float rate = (float)byteCount / seconds / 1000.0;
+    Serial.print(", rate = ");
+    Serial.print(rate);
+    Serial.print(" kbytes/second");
+    Serial.println();
+
+    // Não faça nada para sempre:
+    while (true) {
+      delay(1);
+    }
+  }
+  
+  double Irms = emon1.calcIrms(1480);  // Calculate Irms only
+  Serial.print(Irms*230.0);           // Apparent power
+  Serial.print(" ");
+  Serial.println(Irms);             // Irms
+  
+}
+
+/**
+ * Método para criar a requisição de Insert 
+ * dos consumos
+ */
+String criarInsertDoConsumo(String nome, String tensao, String corrente, String potencia, String data, String uso, String total){
+  return "/consumo/incluir/"+nome+"/"+tensao+"/"+corrente+"/"+potencia+"/"+data+"/"+uso+"/"+total+" ";
+}
+
+/**
+ * Realiza a requisição para o Insert de
+ * dados do Consumo
+ */
+void inserirDadosDoConsumo(String valoresDoInsertConsumo){
+
+  if (client.connect(server, 8080)) {
+    Serial.print("connected to ");
+    Serial.println(client.remoteIP());
+    // Make a HTTP request:
+    client.println("GET "+valoresDoInsertConsumo+" HTTP/1.1");
+    client.print("HOST: ");
+    client.println(server);
+    client.println("Connection: close");
+    client.println();
+  } else {
+    /**
+     * Caso não consiga receber uma conexão do Servidor
+     */
+    Serial.println("connection failed");
+  }
+}
+
+/**
+ * Realiza se desliga a carga
+ */
+void dadosControleCarga(){
+  
+    if (client.connect(server, 8080)) {
+    Serial.print("connected to ");
+    Serial.println(client.remoteIP());
+    // Make a HTTP request:
+    client.println("GET /controle/listar HTTP/1.1");
+    client.print("HOST: ");
+    client.println(server);
+    client.println("Connection: close");
+    client.println();
+  
+  } else {
+    /**
+     * Caso não consiga receber uma conexão do Servidor
+     */
+    Serial.println("connection failed");
+  }
+}

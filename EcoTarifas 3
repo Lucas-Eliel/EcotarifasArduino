@@ -1,0 +1,88 @@
+int porta_rele = 7;
+
+void setup(){
+  digitalWrite(porta_rele, HIGH);
+}
+
+void loop(){
+
+  //CANAL 1
+  double IrmsCanal1 = canal1.calcIrms(1480);
+  double PotenciaCanal1 = IrmsCanal1*230.0;
+  String nomeCanal1;
+  String tensaoCanal1;
+
+  long tempoUsoCanal1;
+  
+  if(IrmsCanal1 < 0.15){
+    if(enviaInfoCanal1){
+      String nomeCanal1 = "Microondas";
+      String tensaoCanal1 = "127";
+      long tempoUsoCanal1 = millis() - offsetCanal1;
+      Serial.println("CANAL 1 ================ Tensao:"+  tensaoCanal1 +" Corrente: "+ correnteCanal1 +" Potencia: "+ potenciaCanal1 + " Tempo Uso: "+ tempoUsoCanal1);
+
+      if (client.connect(server, 8080)) {
+        Serial.print("Conectando em ");
+        Serial.println(client.remoteIP());
+        // Make a HTTP request:
+        client.println("GET /consumo/incluir/"+nomeCanal1+"/"+tensaoCanal1+"/"+correnteCanal1+"/"+potenciaCanal1+"/2019-07-20/"+tempoUsoCanal1+"/200 HTTP/1.1");
+        client.print("HOST: ");
+        client.println(server);
+        client.println("Conexão: concluída");
+        client.println();
+        client.stop();
+      } else {
+        Serial.println("Falha na Conexão");
+      }
+      delay(10000);
+   
+      enviaInfoCanal1 = false; 
+    }
+  }else {
+      //Montando dados do consumo
+      if(!enviaInfoCanal1){
+        offsetCanal1 = millis();
+      }
+      correnteCanal1 = IrmsCanal1;
+      potenciaCanal1 = PotenciaCanal1;
+      enviaInfoCanal1 = true;
+  }
+  
+   //CONTROLE CANAL 1
+    if (client.connect(server, 8080)) {
+        Serial.print("Conectando em ");
+        Serial.println(client.remoteIP());
+        // Make a HTTP request:
+        client.println("GET /controle/listar HTTP/1.1");
+        client.print("HOST: ");
+        client.println(server);
+        client.println("Conexão: concluída");
+        client.println();
+        client.stop();
+    } else {
+        Serial.println("Falha na Conexão");
+    }
+    delay(10000);
+    
+    int len = client.available();
+    if (len > 0) {
+        byte buffer[80];
+        if (len > 80) len = 80;
+        client.read(buffer, len);
+        Serial.write(buffer, len);
+      
+        String stringRequest = buffer;
+        String stringBody = stringBody.substring(300);
+        JsonObject& root = jsonBuffer.parseObject(stringBody);
+        
+        if(root.size() > 0){
+            int status = root[String("status")];
+      
+            if(status == 1){
+                digitalWrite(porta_rele, HIGH);
+            }else{
+                digitalWrite(porta_rele, LOW);
+            }
+        }
+    }
+}

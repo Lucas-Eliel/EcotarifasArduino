@@ -1,0 +1,73 @@
+/***********************************************
+ *ECOTARIFAS - Sistema de Economia de Energia
+ * 
+ *Criado em 14/06/2019
+ *Última atualização em 28/08/2019
+ *Autor Lucas Eliel e Lucas Souza
+ ***********************************************/
+
+/************************************************************************
+ **************************** Bibliotecas *******************************
+ ***********************************************************************/
+
+#include "EmonLib.h"
+
+/************************************************************************
+ ***************************** Variáveis ********************************
+ ***********************************************************************/
+
+//TRANSFORMADOR DE CORRENTE
+EnergyMonitor canal1;
+EnergyMonitor canal2;
+EnergyMonitor canal3;
+
+/************************************************************************
+ ***************************** Void Setup *******************************
+ ***********************************************************************/
+ 
+void setup() {
+  
+  Serial.begin(9600); // Inicializa a comunicação serial para o terminal de comando
+  
+  canal1.current(1, 40); // Corrente: (Pino analógico, Calibração) - Canal 1
+  canal2.current(2, 40); // Corrente: (Pino analógico, Calibração) - Canal 2
+  canal3.current(3, 40); // Corrente: (Pino analógico, Calibração) - Canal 3
+  
+}
+
+/************************************************************************
+ ***************************** Void Loop ********************************
+ ***********************************************************************/
+
+void loop() {
+  /*************************** CANAL 1 ********************************/
+  double IrmsCanal1 = canal1.calcIrms(1480);
+  double PotenciaCanal1 = IrmsCanal1*230.0;
+
+  Serial.print("Canal 1 = ");
+  Serial.print(IrmsCanal1);
+
+  /************************* FIM CANAL 1 ******************************/
+
+
+  /*************************** CANAL 2 ********************************/
+  double IrmsCanal2 = canal2.calcIrms(1480);
+  double PotenciaCanal2 = IrmsCanal2*230.0;
+ 
+  Serial.print(" | Canal 2 = ");
+  Serial.print(IrmsCanal2);
+   
+  /************************* FIM CANAL 2 ******************************/
+  
+  
+  /*************************** CANAL 3 ********************************/
+  double IrmsCanal3 = canal3.calcIrms(1480);
+  double PotenciaCanal3 = IrmsCanal3*230.0;
+ 
+  Serial.print(" | Canal 3 = ");
+  Serial.print(IrmsCanal3);
+  
+  Serial.println("----------------------------------------------------");
+        
+  /************************* FIM CANAL 3 ******************************/
+}
